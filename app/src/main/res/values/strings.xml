@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Mplayer</string>
+    <string name="open_player">打开播放器</string>
 </resources>
