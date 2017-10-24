@@ -6,70 +6,46 @@ import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.widget.FrameLayout;
+
+import com.easedroid.mplayer.widgets.PlayerView;
 
 import java.io.IOException;
-import java.util.Timer;
-import java.util.TimerTask;
 
-public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
+public class PlayerActivity extends Activity {
 
     private static final String TAG = "PlayerActivity";
-    private SurfaceView surfaceView;
-    private MediaPlayer nextPlayer;
+    private FrameLayout containerView;
+    private PlayerView playerView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_player);
-        surfaceView = (SurfaceView) findViewById(R.id.id_surface_view);
-        initSurface(surfaceView);
-    }
-
-    private void initSurface(SurfaceView surfaceView) {
-        SurfaceHolder holder = surfaceView.getHolder();
-        holder.addCallback(this);
+        containerView = (FrameLayout) findViewById(R.id.id_surface_container);
+        playerView = new PlayerView();
+        playerView.initView(this, containerView);
     }
 
     @Override
-    public void surfaceCreated(SurfaceHolder surfaceHolder) {
-        Log.d(TAG, "surface created");
-        startPlayerVideo();
+    protected void onResume() {
+        super.onResume();
+        startPlayerVideo(playerView);
     }
 
-    @Override
-    public void surfaceChanged(SurfaceHolder surfaceHolder, int i, int i1, int i2) {
-        Log.d(TAG, "surface changed " + i1 + " x " + i2);
-
-    }
-
-    @Override
-    public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
-        Log.d(TAG, "surface destroyed");
-
-    }
-
-    private void startPlayerVideo() {
-        final MediaPlayer player = new MediaPlayer();
-        player.setAudioStreamType(AudioManager.STREAM_MUSIC);
-        player.setDisplay(surfaceView.getHolder());
+    private void startPlayerVideo(final PlayerView player) {
         String playUrl = getPlayUrl();
         player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
             @Override
             public void onCompletion(MediaPlayer mp) {
-                try {
-                    Log.d(TAG, "onCompletion start reset");
-                    player.reset();
-                    Log.d(TAG, "onCompletion end reset");
-                    player.setDataSource(getPlayUrl());
-                    player.prepare();
-                    player.start();
-                    Log.d(TAG, "onCompletion start video");
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+                player.setVideoPath(getPlayUrl());
 
+            }
+        });
+        player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+            @Override
+            public void onPrepared(MediaPlayer mp) {
+                player.start();
             }
         });
         player.setOnInfoListener(new MediaPlayer.OnInfoListener() {
@@ -82,18 +58,18 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
             }
         });
         if (playUrl == null) return;
-        try {
-            player.setDataSource(this, Uri.parse(playUrl));
-            player.prepare();
-            player.start();
-        } catch (IOException e) {
-            e.printStackTrace();
+        player.setVideoPath(playUrl);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (playerView != null) {
+            playerView.stop();
         }
     }
 
     private String getPlayUrl() {
         return "/sdcard/vod/demo.mp4";
     }
-
-
 }
