@@ -1,29 +1,24 @@
 package com.easedroid.mplayer;
 
 import android.app.Activity;
-import android.media.AudioManager;
 import android.media.MediaPlayer;
-import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.FrameLayout;
-
-import com.easedroid.mplayer.widgets.PlayerView;
-
-import java.io.IOException;
+import com.easedroid.mplayer.widgets.StrongPlayerView;
 
 public class PlayerActivity extends Activity {
 
     private static final String TAG = "PlayerActivity";
     private FrameLayout containerView;
-    private PlayerView playerView;
+    private StrongPlayerView playerView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_player);
         containerView = (FrameLayout) findViewById(R.id.id_surface_container);
-        playerView = new PlayerView();
+        playerView = new StrongPlayerView();
         playerView.initView(this, containerView);
     }
 
@@ -33,13 +28,12 @@ public class PlayerActivity extends Activity {
         startPlayerVideo(playerView);
     }
 
-    private void startPlayerVideo(final PlayerView player) {
+    private void startPlayerVideo(final StrongPlayerView player) {
         String playUrl = getPlayUrl();
         player.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
             @Override
             public void onCompletion(MediaPlayer mp) {
-                player.setVideoPath(getPlayUrl());
-
+                Log.d("bin.jing", "mp --->" + mp.hashCode());
             }
         });
         player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
@@ -58,7 +52,11 @@ public class PlayerActivity extends Activity {
             }
         });
         if (playUrl == null) return;
-        player.setVideoPath(playUrl);
+        player.setPlayList(new String[]{
+                "/storage/sdcard/vod/demo.mp4",
+                "/storage/sdcard/vod/demo_1.mp4",
+                "/storage/sdcard/vod/demo_2.mp4"
+        });
     }
 
     @Override

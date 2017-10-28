@@ -4,6 +4,7 @@ import android.content.Context;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -15,14 +16,14 @@ import java.util.Map;
 
 /**
  * 项目名称：MediaPlayer <br/>
- * 类名称：PlayerView    <br/>
- * 类描述：<br/>
- * 作者：bin.jing on 2017/10/24 20:48<br/>
+ * 类名称：StrongPlayerView    <br/>
+ * 类描述：StrongPlayerView 使用两个MediaPlayer来实现无缝切换视频功能的工具<br/>
+ * 作者：bin.jing on 2017/10/28 19:23<br/>
  * 邮箱：752368300@qq.com<br/>
  */
-public class PlayerView {
+public class StrongPlayerView {
 
-    public static final String TAG = "PlayerView";
+    public static final String TAG = "StrongPlayerView";
     private SurfaceHolder surfaceHolder;
     private SurfaceView surfaceView;
 
@@ -57,7 +58,6 @@ public class PlayerView {
     private MediaPlayer.OnInfoListener mOnInfoListener;
     private int mSeekWhenPrepared;  // recording the seek position while preparing
     private Context mContext;
-    private int mCurrentBufferPercentage;
 
 
     public void initView(Context context, ViewGroup parent) {
@@ -140,7 +140,7 @@ public class PlayerView {
      *
      * @param path the path of the video.
      */
-    public void setVideoPath(String path) {
+    private void setVideoPath(String path) {
         setVideoURI(Uri.parse(path));
     }
 
@@ -149,7 +149,7 @@ public class PlayerView {
      *
      * @param uri the URI of the video.
      */
-    public void setVideoURI(Uri uri) {
+    private void setVideoURI(Uri uri) {
         setVideoURI(uri, null);
     }
 
@@ -175,7 +175,7 @@ public class PlayerView {
      *                "android-allow-cross-domain-redirect" as the key and "0" or "1" as the value
      *                to disallow or allow cross domain redirection.
      */
-    public void setVideoURI(Uri uri, Map<String, String> headers) {
+    private void setVideoURI(Uri uri, Map<String, String> headers) {
         mUri = uri;
         mHeaders = headers;
         mSeekWhenPrepared = 0;
@@ -191,9 +191,6 @@ public class PlayerView {
         // called start() previously
         release(false);
 
-        AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-        am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
-
         try {
             mMediaPlayer = new MediaPlayer();
             mMediaPlayer.setOnPreparedListener(mPreparedListener);
@@ -201,8 +198,6 @@ public class PlayerView {
             mMediaPlayer.setOnCompletionListener(mCompletionListener);
             mMediaPlayer.setOnErrorListener(mErrorListener);
             mMediaPlayer.setOnInfoListener(mInfoListener);
-            mMediaPlayer.setOnBufferingUpdateListener(mBufferingUpdateListener);
-            mCurrentBufferPercentage = 0;
             mMediaPlayer.setDataSource(mContext, mUri, mHeaders);
             mMediaPlayer.setDisplay(surfaceHolder);
             mMediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
@@ -232,6 +227,8 @@ public class PlayerView {
     MediaPlayer.OnVideoSizeChangedListener mSizeChangedListener =
             new MediaPlayer.OnVideoSizeChangedListener() {
                 public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
+                    Log.d("bin.jing", "onVideoSizeChanged      " + System.currentTimeMillis());
+
                     mVideoWidth = mp.getVideoWidth();
                     mVideoHeight = mp.getVideoHeight();
                     if (mVideoWidth != 0 && mVideoHeight != 0) {
@@ -243,8 +240,9 @@ public class PlayerView {
 
     MediaPlayer.OnPreparedListener mPreparedListener = new MediaPlayer.OnPreparedListener() {
         public void onPrepared(MediaPlayer mp) {
+            Log.d("bin.jing", "onPrepared      " + System.currentTimeMillis());
             mCurrentState = STATE_PREPARED;
-
+            onVideoStartPlay();
             if (mOnPreparedListener != null) {
                 mOnPreparedListener.onPrepared(mMediaPlayer);
             }
@@ -280,11 +278,13 @@ public class PlayerView {
     private MediaPlayer.OnCompletionListener mCompletionListener =
             new MediaPlayer.OnCompletionListener() {
                 public void onCompletion(MediaPlayer mp) {
+                    Log.d("bin.jing", "onCompletion      " + System.currentTimeMillis());
                     mCurrentState = STATE_PLAYBACK_COMPLETED;
                     mTargetState = STATE_PLAYBACK_COMPLETED;
                     if (mOnCompletionListener != null) {
                         mOnCompletionListener.onCompletion(mMediaPlayer);
                     }
+                    startStandbyPlayer();
                 }
             };
 
@@ -313,13 +313,6 @@ public class PlayerView {
             return true;
         }
     };
-
-    private MediaPlayer.OnBufferingUpdateListener mBufferingUpdateListener =
-            new MediaPlayer.OnBufferingUpdateListener() {
-                public void onBufferingUpdate(MediaPlayer mp, int percent) {
-                    mCurrentBufferPercentage = percent;
-                }
-            };
 
     /**
      * Register a callback to be invoked when the media file
@@ -467,7 +460,144 @@ public class PlayerView {
                 mCurrentState != STATE_PREPARING);
     }
 
-    public int getmCurrentBufferPercentage() {
-        return mCurrentBufferPercentage;
+    /* 多播放器实现逻辑 */
+
+    private String[] videoPaths;
+    private int playIndex;
+    private boolean looping = true;
+    private MediaPlayer standbyPlayer;
+    private boolean preparingStandbyPlayer = false;
+    private MediaPlayer tempMediaPlayer;
+
+
+    /**
+     * 子线程调用
+     * 准备下一个MediaPlayer,用于切换。
+     *
+     * @return
+     */
+    private void prepareNextMediaPlayer() {
+        if (standbyPlayer != null) {//已经准备完成
+            return;
+        }
+        if (preparingStandbyPlayer) { //正在准备中
+            return;
+        }
+        preparingStandbyPlayer = true;
+        String path = getNextVideoPath();
+        if (TextUtils.isEmpty(path)) {
+            return;
+        }
+        try {
+            tempMediaPlayer = new MediaPlayer();
+            tempMediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                @Override
+                public void onPrepared(MediaPlayer mp) {
+                    Log.d("bin.jing", "temp player onPrepared      " + System.currentTimeMillis());
+                    standbyPlayer = mp;
+                    preparingStandbyPlayer = false;
+                    tempMediaPlayer = null;
+                    Log.d(TAG, "standby player prepared success.");
+                }
+            });
+            tempMediaPlayer.setOnVideoSizeChangedListener(_OnVideoSizeChangedListener);
+            tempMediaPlayer.setOnCompletionListener(_OnCompletionListener);
+            tempMediaPlayer.setOnErrorListener(_OnErrorListener);
+            tempMediaPlayer.setOnInfoListener(_OnInfoListener);
+            tempMediaPlayer.setDataSource(mContext, Uri.parse(path));
+            tempMediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+            tempMediaPlayer.setScreenOnWhilePlaying(true);
+            tempMediaPlayer.prepareAsync();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private MediaPlayer.OnVideoSizeChangedListener _OnVideoSizeChangedListener = new MediaPlayer.OnVideoSizeChangedListener() {
+        @Override
+        public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
+            if (mp == mMediaPlayer) {
+                mSizeChangedListener.onVideoSizeChanged(mp, width, height);
+            }
+        }
+    };
+
+    private MediaPlayer.OnCompletionListener _OnCompletionListener = new MediaPlayer.OnCompletionListener() {
+        @Override
+        public void onCompletion(MediaPlayer mp) {
+            if (mp == mMediaPlayer) {
+                mCompletionListener.onCompletion(mp);
+            }
+        }
+    };
+
+    private MediaPlayer.OnErrorListener _OnErrorListener = new MediaPlayer.OnErrorListener() {
+        @Override
+        public boolean onError(MediaPlayer mp, int what, int extra) {
+            if (mp == mMediaPlayer) {
+                mErrorListener.onError(mp, what, extra);
+            }
+            return true;
+        }
+    };
+
+    private MediaPlayer.OnInfoListener _OnInfoListener = new MediaPlayer.OnInfoListener() {
+        @Override
+        public boolean onInfo(MediaPlayer mp, int what, int extra) {
+            if (mp == mMediaPlayer) {
+                mInfoListener.onInfo(mp, what, extra);
+            }
+            return true;
+        }
+    };
+
+
+    /**
+     * 设置视频播放路径集合.
+     *
+     * @param videoPaths
+     */
+    public void setPlayList(String[] videoPaths) {
+        this.videoPaths = videoPaths;
+        this.playIndex = 0;
+        if (this.videoPaths != null && this.videoPaths.length > 0) {
+            setVideoPath(this.videoPaths[playIndex]);
+        }
+    }
+
+    private String getNextVideoPath() {
+        synchronized (this.videoPaths) {
+            int length = this.videoPaths.length;
+            if (looping) {
+                String path = this.videoPaths[(++playIndex) % length];
+                return path;
+            }
+            if (++playIndex >= length) {
+                return null;
+            }
+            return this.videoPaths[playIndex];
+        }
+    }
+
+    private void startStandbyPlayer() {
+        if (standbyPlayer == null) {
+            return;
+        }
+        if (mMediaPlayer != null) {
+            mMediaPlayer.setDisplay(null);
+        }
+        release(true);
+        mCurrentState = STATE_PREPARED;
+        mMediaPlayer = standbyPlayer;
+        standbyPlayer = null;
+        mMediaPlayer.start();
+        Log.d("bin.jing", "startStandbyPlayer      " + System.currentTimeMillis());
+        mMediaPlayer.setDisplay(surfaceHolder);
+
+        onVideoStartPlay();
+    }
+
+    private void onVideoStartPlay() {
+        prepareNextMediaPlayer();
     }
 }
