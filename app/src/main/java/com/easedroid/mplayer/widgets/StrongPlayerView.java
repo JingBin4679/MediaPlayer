@@ -11,8 +11,12 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 
+import com.easedroid.mplayer.utils.TimeTracker;
+
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * 项目名称：MediaPlayer <br/>
@@ -27,7 +31,6 @@ public class StrongPlayerView {
     private SurfaceHolder surfaceHolder;
     private SurfaceView surfaceView;
 
-    // all possible internal states
     private static final int STATE_ERROR = -1;
     private static final int STATE_IDLE = 0;
     private static final int STATE_PREPARING = 1;
@@ -39,11 +42,6 @@ public class StrongPlayerView {
     private Uri mUri;
     private Map<String, String> mHeaders;
 
-    // mCurrentState is a VideoView object's current state.
-    // mTargetState is the state that a method caller intends to reach.
-    // For instance, regardless the VideoView object's current state,
-    // calling pause() intends to bring the object to a target state
-    // of STATE_PAUSED.
     private int mCurrentState = STATE_IDLE;
     private int mTargetState = STATE_IDLE;
 
@@ -56,7 +54,7 @@ public class StrongPlayerView {
     private MediaPlayer.OnPreparedListener mOnPreparedListener;
     private MediaPlayer.OnErrorListener mOnErrorListener;
     private MediaPlayer.OnInfoListener mOnInfoListener;
-    private int mSeekWhenPrepared;  // recording the seek position while preparing
+    private int mSeekWhenPrepared;
     private Context mContext;
 
 
@@ -160,8 +158,6 @@ public class StrongPlayerView {
             mMediaPlayer = null;
             mCurrentState = STATE_IDLE;
             mTargetState = STATE_IDLE;
-            AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-            am.abandonAudioFocus(null);
         }
     }
 
@@ -227,8 +223,6 @@ public class StrongPlayerView {
     MediaPlayer.OnVideoSizeChangedListener mSizeChangedListener =
             new MediaPlayer.OnVideoSizeChangedListener() {
                 public void onVideoSizeChanged(MediaPlayer mp, int width, int height) {
-                    Log.d("bin.jing", "onVideoSizeChanged      " + System.currentTimeMillis());
-
                     mVideoWidth = mp.getVideoWidth();
                     mVideoHeight = mp.getVideoHeight();
                     if (mVideoWidth != 0 && mVideoHeight != 0) {
@@ -240,7 +234,6 @@ public class StrongPlayerView {
 
     MediaPlayer.OnPreparedListener mPreparedListener = new MediaPlayer.OnPreparedListener() {
         public void onPrepared(MediaPlayer mp) {
-            Log.d("bin.jing", "onPrepared      " + System.currentTimeMillis());
             mCurrentState = STATE_PREPARED;
             onVideoStartPlay();
             if (mOnPreparedListener != null) {
@@ -278,7 +271,7 @@ public class StrongPlayerView {
     private MediaPlayer.OnCompletionListener mCompletionListener =
             new MediaPlayer.OnCompletionListener() {
                 public void onCompletion(MediaPlayer mp) {
-                    Log.d("bin.jing", "onCompletion      " + System.currentTimeMillis());
+                    TimeTracker.time("SwitchPlayer");
                     mCurrentState = STATE_PLAYBACK_COMPLETED;
                     mTargetState = STATE_PLAYBACK_COMPLETED;
                     if (mOnCompletionListener != null) {
@@ -288,9 +281,14 @@ public class StrongPlayerView {
                 }
             };
 
+    private boolean once = true;
     private MediaPlayer.OnInfoListener mInfoListener =
             new MediaPlayer.OnInfoListener() {
                 public boolean onInfo(MediaPlayer mp, int arg1, int arg2) {
+                    if (arg1 == 3 && once) {
+                        once = false;
+                        TimeTracker.time("SwitchPlayer");
+                    }
                     if (mOnInfoListener != null) {
                         mOnInfoListener.onInfo(mp, arg1, arg2);
                     }
@@ -395,8 +393,6 @@ public class StrongPlayerView {
             if (clearTargetState) {
                 mTargetState = STATE_IDLE;
             }
-            AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-            am.abandonAudioFocus(null);
         }
     }
 
@@ -493,11 +489,9 @@ public class StrongPlayerView {
             tempMediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 @Override
                 public void onPrepared(MediaPlayer mp) {
-                    Log.d("bin.jing", "temp player onPrepared      " + System.currentTimeMillis());
                     standbyPlayer = mp;
                     preparingStandbyPlayer = false;
                     tempMediaPlayer = null;
-                    Log.d(TAG, "standby player prepared success.");
                 }
             });
             tempMediaPlayer.setOnVideoSizeChangedListener(_OnVideoSizeChangedListener);
@@ -561,6 +555,7 @@ public class StrongPlayerView {
         this.videoPaths = videoPaths;
         this.playIndex = 0;
         if (this.videoPaths != null && this.videoPaths.length > 0) {
+            TimeTracker.time("SwitchPlayer");
             setVideoPath(this.videoPaths[playIndex]);
         }
     }
@@ -586,18 +581,33 @@ public class StrongPlayerView {
         if (mMediaPlayer != null) {
             mMediaPlayer.setDisplay(null);
         }
-        release(true);
+        releasePlayerAsync(mMediaPlayer);
         mCurrentState = STATE_PREPARED;
         mMediaPlayer = standbyPlayer;
-        standbyPlayer = null;
-        mMediaPlayer.start();
-        Log.d("bin.jing", "startStandbyPlayer      " + System.currentTimeMillis());
         mMediaPlayer.setDisplay(surfaceHolder);
-
+        mMediaPlayer.start();
+        once = true;
+        standbyPlayer = null;
         onVideoStartPlay();
     }
 
     private void onVideoStartPlay() {
         prepareNextMediaPlayer();
     }
+
+    private void releasePlayerAsync(final MediaPlayer player) {
+        mTargetState = STATE_IDLE;
+        final MediaPlayer temp = player;
+        executor.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (temp != null) {
+                    temp.reset();
+                    temp.release();
+                }
+            }
+        });
+    }
+
+    private Executor executor = Executors.newSingleThreadExecutor();
 }
